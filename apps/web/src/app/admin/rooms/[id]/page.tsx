@@ -729,7 +729,7 @@ export default function AdminRoomDetailPage({
                 />
               </div>
 
-              <Divider orientation="left" plain style={{ fontSize: 13 }}>
+              <Divider titlePlacement="left" plain style={{ fontSize: 13 }}>
                 Qualities
               </Divider>
               <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
