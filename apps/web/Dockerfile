@@ -14,6 +14,7 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN cd apps/web && pnpm prisma generate
 RUN pnpm build
 
 FROM base AS runner
