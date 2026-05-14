@@ -1,0 +1,27 @@
+$ pnpm --filter web build
+$ next build
+   ▲ Next.js 15.5.18
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 3.4s
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/4) ...
+   Generating static pages (1/4) 
+   Generating static pages (2/4) 
+   Generating static pages (3/4) 
+ ✓ Generating static pages (4/4)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                 Size  First Load JS
+┌ ○ /                                      127 B         102 kB
+└ ○ /_not-found                            999 B         103 kB
++ First Load JS shared by all             102 kB
+  ├ chunks/342-bd11ac545c9056e5.js       45.7 kB
+  ├ chunks/b410d746-ca4f84417ff7f8fd.js  54.2 kB
+  └ other shared chunks (total)          1.88 kB
+
+
+○  (Static)  prerendered as static content
+

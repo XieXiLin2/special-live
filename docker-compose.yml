@@ -1,0 +1,69 @@
+# Production Docker Compose — SRS + Nginx + Next.js
+# PostgreSQL, Redis, and Authentik are external (managed separately)
+
+services:
+  srs:
+    image: ossrs/srs:6
+    ports:
+      - "1935:1935"
+      - "1985:1985"
+      - "8080:8080"
+    volumes:
+      - ./docker/srs/srs.conf:/usr/local/srs/conf/srs.conf:ro
+      - srs-hls:/usr/local/srs/objs/nginx/html
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1985/api/v1/versions"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: 3
+
+  nginx:
+    build: ./docker/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - srs-hls:/var/www/hls:ro
+    restart: unless-stopped
+    depends_on:
+      - srs
+      - web
+    networks:
+      - app-network
+
+  web:
+    build: ./apps/web
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - AUTH_SECRET=${AUTH_SECRET}
+      - AUTH_AUTHENTIK_ID=${AUTH_AUTHENTIK_ID}
+      - AUTH_AUTHENTIK_SECRET=${AUTH_AUTHENTIK_SECRET}
+      - AUTH_AUTHENTIK_ISSUER=${AUTH_AUTHENTIK_ISSUER}
+      - SRS_API_URL=${SRS_API_URL}
+      - SRS_CALLBACK_SECRET=${SRS_CALLBACK_SECRET}
+      - NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL}
+    restart: unless-stopped
+    depends_on:
+      - srs
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  srs-hls:

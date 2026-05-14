@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: special-live-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: special_live
+      POSTGRES_PASSWORD: special_live_password
+      POSTGRES_DB: special_live
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U special_live -d special_live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: special-live-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  srs:
+    image: ossrs/srs:6
+    container_name: special-live-srs
+    restart: unless-stopped
+    ports:
+      - "1935:1935"
+      - "1985:1985"
+      - "8080:8080"
+    environment:
+      SRS_API_AUTH_USER: ${SRS_API_AUTH_USER:-special_live}
+      SRS_API_AUTH_PASS: ${SRS_API_AUTH_PASS:-special_live_password}
+    volumes:
+      - ./docker/srs/srs.conf:/usr/local/srs/conf/srs.conf:ro
+      - srs_data:/usr/local/srs/objs/nginx/html
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-u", "${SRS_API_AUTH_USER:-special_live}:${SRS_API_AUTH_PASS:-special_live_password}", "http://localhost:1985/api/v1/versions"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: ./objs/srs -c conf/srs.conf
+
+volumes:
+  postgres_data:
+  redis_data:
+  srs_data:
+
+networks:
+  app-network:
+    driver: bridge

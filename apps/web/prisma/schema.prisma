@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum StreamRoomVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+// ─── NextAuth Models ────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  name          String?
+  role          UserRole  @default(USER)
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Stream Models ───────────────────────────────────────
+
+model StreamRoom {
+  id         String                @id @default(uuid())
+  name       String
+  slug       String                @unique
+  visibility StreamRoomVisibility  @default(PUBLIC)
+  streamKey  String                @unique
+  manualMode Boolean               @default(false)
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+
+  streamKeys  StreamKey[]
+  playSources PlaySource[]
+}
+
+model StreamKey {
+  id        String   @id @default(uuid())
+  keyHash   String
+  label     String
+  isActive  Boolean  @default(true)
+  roomId    String
+  createdAt DateTime @default(now())
+  expiresAt DateTime?
+
+  room StreamRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
+}
+
+model PlaySource {
+  id     String @id @default(uuid())
+  name   String
+  roomId String
+  order  Int
+
+  room      StreamRoom          @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  qualities PlaySourceQuality[]
+
+  @@unique([roomId, order])
+}
+
+model PlaySourceQuality {
+  id       String @id @default(uuid())
+  label    String
+  url      String
+  sourceId String
+
+  source PlaySource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+}
+
+// ─── Config Model ────────────────────────────────────────
+
+model SiteConfig {
+  id         String @id @default(uuid())
+  siteTitle  String
+  faviconUrl String
+}
