@@ -15,6 +15,12 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN cd apps/web && pnpm prisma generate
+ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
+ENV AUTH_SECRET="build-placeholder-secret-32bytes-long!!"
+ENV AUTH_AUTHENTIK_ID="build-placeholder"
+ENV AUTH_AUTHENTIK_SECRET="build-placeholder"
+ENV AUTH_AUTHENTIK_ISSUER="https://auth.example.com/application/o/build"
+ENV SRS_CALLBACK_SECRET="build-placeholder-secret-32bytes-long!!"
 RUN pnpm build
 
 FROM base AS runner
