@@ -145,3 +145,6 @@ dist
 
 # Sisyphus
 .sisyphus/
+
+# Data
+data/

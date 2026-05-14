@@ -10,7 +10,7 @@ services:
       - "8080:8080"
     volumes:
       - ./docker/srs/srs.conf:/usr/local/srs/conf/srs.conf:ro
-      - srs-hls:/usr/local/srs/objs/nginx/html
+      - ./data/srs/hls:/usr/local/srs/objs/nginx/html
     restart: unless-stopped
     networks:
       - app-network
@@ -26,20 +26,22 @@ services:
         max-size: 10m
         max-file: 3
 
-  nginx:
-    build: ./docker/nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - srs-hls:/var/www/hls:ro
-    restart: unless-stopped
-    depends_on:
-      - srs
-      - web
-    networks:
-      - app-network
+  # Nginx is optional — default uses external OpenResty (see docs/deployment.md)
+  # Uncomment if you want Docker-managed nginx instead of external OpenResty
+  # nginx:
+  #   build: ./docker/nginx
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./data/srs/hls:/var/www/hls:ro
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - srs
+  #     - web
+  #   networks:
+  #     - app-network
 
   web:
     build: ./apps/web
@@ -64,6 +66,3 @@ services:
 networks:
   app-network:
     driver: bridge
-
-volumes:
-  srs-hls:

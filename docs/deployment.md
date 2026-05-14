@@ -197,7 +197,6 @@ docker compose build
 
 # 也可单独构建
 docker compose build web
-docker compose build nginx
 ```
 
 ### 启动服务
@@ -210,13 +209,12 @@ docker compose up -d
 docker compose ps
 ```
 
-预期输出三行 `Up` 状态：
+预期输出两行 `Up` 状态：
 
 ```
 NAME                   IMAGE                  STATUS
 special-live-srs-1     ossrs/srs:6            Up (healthy)
 special-live-web-1     special-live-web       Up (healthy)
-special-live-nginx-1   special-live-nginx     Up
 ```
 
 ### 查看日志
@@ -228,7 +226,6 @@ docker compose logs -f
 # 查看特定服务日志
 docker compose logs -f web
 docker compose logs -f srs
-docker compose logs -f nginx
 ```
 
 ### 服务架构
@@ -238,8 +235,7 @@ Docker Compose 定义三个服务，运行在 `app-network` 桥接网络中：
 | 服务 | 镜像 | 内部端口 | 暴露端口 | 说明 |
 |------|------|---------|---------|------|
 | `srs` | `ossrs/srs:6` | 1935/1985/8080 | 1935、1985 | SRS v6 流媒体服务器 |
-| `nginx` | 自定义（基于 nginx:alpine） | 80 | 80、443 | 反向代理 + FLV CDN 绕过 |
-| `web` | 自定义（基于 node:20-alpine） | 3000 | — | Next.js 应用（仅内部访问） |
+| `web` | 自定义（基于 node:20-alpine） | 3000 | 3000 | Next.js 应用 |
 
 > PostgreSQL、Redis 和 Authentik 不在 Docker Compose 中，需作为外部服务运行。
 
@@ -285,90 +281,156 @@ docker compose down --volumes
 
 ## 6. Nginx 配置
 
-### 配置文件位置
+### 默认方案：外部 OpenResty（推荐）
 
-Nginx 配置位于 `docker/nginx/nginx.conf`，构建时复制到镜像中。
+默认情况下，**不通过 Docker Compose 启动 Nginx**。推荐使用外部已搭建好的 OpenResty/Nginx 服务器。
 
-### 路由规则
-
-`live.example.com` 域名的路由规则：
+OpenResty 需要代理以下路由：
 
 | 路径 | 代理目标 | 说明 |
 |------|---------|------|
-| `/live/*.flv` | SRS HTTP-FLV (8080) | FLV 播放流。`proxy_buffering off`，`proxy_read_timeout 3600s` |
-| `/live/*.m3u8` | SRS HLS (8080) | HLS 播放列表 |
-| `/live/*.ts` | SRS HLS (8080) | HLS TS 分片 |
-| `/api/*`、`/` | Next.js (3000) | API 路由和前端页面 |
+| `/live/*.flv` | SRS HTTP-FLV (端口 8080) | FLV 播放流。必须 `proxy_buffering off`，`proxy_read_timeout 3600s` |
+| `/live/*.m3u8` | SRS HLS (端口 8080) | HLS 播放列表 |
+| `/live/*.ts` | SRS HLS (端口 8080) | HLS TS 分片 |
+| `/api/*`、`/` | Next.js (端口 3000) | API 路由和前端页面 |
 
-### CDN 绕过
+### 方式一：手动配置 OpenResty
 
-FLV 流使用长连接（最长 3600 秒），CDN 会中断此类连接。Nginx 通过以下配置绕过 CDN：
+将 `docker/nginx/nginx.conf` 中的 server 块复制到你的 OpenResty 配置中。
+
+关键配置项：
 
 ```nginx
-location ~ ^/live/.+\.flv$ {
-    proxy_pass http://srs_http;
-    proxy_buffering off;
-    proxy_cache off;
-    proxy_read_timeout 3600s;
-    add_header Cache-Control 'no-cache, no-store, must-revalidate';
-    add_header Pragma no-cache;
+# 上游定义
+upstream srs_http {
+    server localhost:8080;
 }
-```
 
-### 推流域名
-
-`live-push.example.com` 的 Nginx 配置仅作为信息展示，实际 RTMP 推流直接由 SRS 处理（端口 1935）。推流地址格式：
-
-```
-rtmp://live-push.example.com:1935/live/<stream-key>
-```
-
-### SSL 证书
-
-**方式一：外部 CDN 终止 SSL**
-
-如果使用 Cloudflare 等 CDN，SSL 在 CDN 层终止，Nginx 只需监听 80 端口。CDN 回源到 Nginx 的 80 端口。
-
-**方式二：直接配置 Let's Encrypt**
-
-在宿主机上使用 certbot 获取证书，然后修改 `docker/nginx/nginx.conf` 添加 SSL 配置：
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name live.example.com;
-
-    ssl_certificate /etc/letsencrypt/live/live.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/live.example.com/privkey.pem;
-
-    # ... 其余配置同上
+upstream web_app {
+    server localhost:3000;
 }
 
 server {
     listen 80;
     server_name live.example.com;
-    return 301 https://$host$request_uri;
+
+    # FLV 流 — CDN 绕过（长连接）
+    location ~ ^/live/.+\.flv$ {
+        proxy_pass http://srs_http;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        add_header Cache-Control 'no-cache, no-store, must-revalidate';
+        add_header Pragma no-cache;
+        add_header Access-Control-Allow-Origin *;
+    }
+
+    # HLS 播放列表和分片
+    location ~ ^/live/.+\.(m3u8|ts)$ {
+        proxy_pass http://srs_http;
+        add_header Access-Control-Allow-Origin *;
+    }
+
+    # 预检请求
+    location ~ ^/live/.+\.flv$ {
+        if ($request_method = 'OPTIONS') {
+            add_header Access-Control-Allow-Origin *;
+            add_header Access-Control-Allow-Methods 'GET, OPTIONS';
+            return 204;
+        }
+    }
+
+    # Web 应用和 API
+    location / {
+        proxy_pass http://web_app;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
 }
 ```
 
-Nginx 镜像默认不包含证书文件，建议将证书挂载到容器中：
+### 方式二：1Panel 可视化配置
 
-```yaml
-# docker-compose.yml 挂载卷
-volumes:
-  - /etc/letsencrypt:/etc/letsencrypt:ro
+如果使用 [1Panel](https://1panel.cn/) 管理服务器，按以下步骤配置：
+
+**步骤 1：创建网站**
+1. 进入 1Panel → 网站 → 创建网站
+2. 选择 **反向代理** 类型
+3. 主域名填写 `live.example.com`
+4. 代理地址填写 `http://127.0.0.1:3000`（Next.js）
+5. 保存
+
+**步骤 2：添加 FLV/HLS 路由**
+1. 进入刚创建的网站 → 配置文件
+2. 在 `location /` 块之前添加以下内容：
+
+```nginx
+    location ~ ^/live/.+\.flv$ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        add_header Cache-Control 'no-cache, no-store, must-revalidate';
+        add_header Pragma no-cache;
+        add_header Access-Control-Allow-Origin *;
+    }
+
+    location ~ ^/live/.+\.(m3u8|ts)$ {
+        proxy_pass http://127.0.0.1:8080;
+        add_header Access-Control-Allow-Origin *;
+    }
 ```
+
+**步骤 3：配置 HTTPS（可选）**
+1. 在 1Panel 网站列表中点击 **HTTPS**
+2. 选择 **Let's Encrypt** 或上传自有证书
+3. 开启 **HTTP 自动跳转 HTTPS**
+4. 保存
+
+**步骤 4：添加防火墙规则**
+1. 进入 1Panel → 安全 → 防火墙
+2. 开放端口：`80`、`443`、`1935`
+3. 保存
+
+### 方式三：Docker Compose 内置 Nginx（可选）
+
+如果不想使用外部 OpenResty，可以取消注释 `docker-compose.yml` 中的 nginx 服务：
+
+```bash
+# 编辑 docker-compose.yml，取消 nginx 服务的注释
+# 然后启动
+
+docker compose up -d nginx
+```
+
+> ⚠️ 使用内置 Nginx 时，需要将域名 DNS 指向本服务器，并配置 SSL 证书。
+
+### SSL 证书
+
+**外部 CDN（推荐）**
+
+使用 Cloudflare 等 CDN 时，SSL 在 CDN 层终止，OpenResty 只需监听 80 端口。
+
+**Let's Encrypt 直接配置**
+
+在宿主机上使用 certbot：
+
+```bash
+certbot certonly --standalone -d live.example.com
+```
+
+然后在 OpenResty/1Panel 中配置证书路径。
 
 ### CORS 配置
 
-所有流媒体端点均配置了 CORS 头：
+所有流媒体端点必须配置 CORS：
 
 ```nginx
 add_header Access-Control-Allow-Origin *;
 add_header Access-Control-Allow-Methods 'GET, OPTIONS';
 ```
 
-OPTIONS 预检请求返回 204，缓存 1728000 秒（20 天）。
+OPTIONS 预检请求返回 204。
 
 ---
 
@@ -451,10 +513,10 @@ SRS v6 (端口 1935/8080)
 ### Docker
 
 - [ ] `docker compose build` 成功
-- [ ] `docker compose up -d` 启动后 `docker compose ps` 显示三个服务均为 Up 状态
+- [ ] `docker compose up -d` 启动后 `docker compose ps` 显示两个服务均为 Up 状态
 - [ ] SRS 健康检查通过：`curl http://localhost:1985/api/v1/versions`
 - [ ] Web 健康检查通过：`curl http://localhost:3000/api/health` 返回 `{"status":"ok",...}`
-- [ ] Nginx 可达：`curl -H "Host: live.example.com" http://localhost/` 返回页面内容（非 502）
+- [ ] 外部 Nginx/OpenResty 已配置并可达：`curl -H "Host: live.example.com" http://localhost/` 返回页面内容（非 502）
 - [ ] SSL 证书已配置（如适用）
 
 ### 网络
@@ -479,13 +541,11 @@ SRS v6 (端口 1935/8080)
 
 ### 容器镜像
 
-CI 自动构建并推送镜像到 GitHub Container Registry：
+CI 自动构建并推送 Web 镜像到 GitHub Container Registry：
 
 | 服务 | 镜像路径 |
 |------|---------|
 | Web | `ghcr.io/xiexilin2/special-live/web` |
-| SRS | `ghcr.io/xiexilin2/special-live/srs` |
-| Nginx | `ghcr.io/xiexilin2/special-live/nginx` |
 
 ### 标签策略
 
@@ -503,28 +563,15 @@ CI 自动构建并推送镜像到 GitHub Container Registry：
 ```yaml
 services:
   srs:
-    image: ghcr.io/xiexilin2/special-live/srs:latest
+    image: ossrs/srs:6
     ports:
       - "1935:1935"
       - "1985:1985"
       - "8080:8080"
     volumes:
+      - ./docker/srs/srs.conf:/usr/local/srs/conf/srs.conf:ro
       - srs-hls:/usr/local/srs/objs/nginx/html
     restart: unless-stopped
-    networks:
-      - app-network
-
-  nginx:
-    image: ghcr.io/xiexilin2/special-live/nginx:latest
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - srs-hls:/var/www/hls:ro
-    restart: unless-stopped
-    depends_on:
-      - srs
-      - web
     networks:
       - app-network
 
@@ -590,14 +637,6 @@ docker run -d \
   -p 3000:3000 \
   --env-file .env \
   ghcr.io/xiexilin2/special-live/web:latest
-
-# 启动 Nginx
-docker run -d \
-  --name nginx \
-  -p 80:80 -p 443:443 \
-  -v $(pwd)/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro \
-  -v srs-hls:/var/www/hls:ro \
-  ghcr.io/xiexilin2/special-live/nginx:latest
 ```
 
 ---
@@ -611,10 +650,8 @@ special-live/
 ├── docker/
 │   ├── .env.production          # 生产环境变量模板
 │   ├── nginx/
-│   │   ├── Dockerfile
-│   │   └── nginx.conf           # Nginx 反向代理配置
+│   │   └── nginx.conf           # Nginx 反向代理配置（可选，供外部 OpenResty 参考）
 │   └── srs/
-│       ├── Dockerfile
 │       └── srs.conf             # SRS 流媒体服务器配置
 ├── apps/
 │   └── web/
