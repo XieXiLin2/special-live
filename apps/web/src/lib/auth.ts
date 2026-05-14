@@ -21,7 +21,7 @@ const adapter = PrismaAdapter(prisma);
 const customAdapter = {
   ...adapter,
   createUser: async (data: AdapterUser) => {
-    return await prisma.$transaction(async (tx) => {
+    return await prisma.$transaction(async (tx: any) => {
       const { id: _id, ...rest } = data;
       const created = await tx.user.create({ data: rest as any });
 

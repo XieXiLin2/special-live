@@ -105,11 +105,11 @@ export async function populateRoomCache(roomId: string): Promise<void> {
   await cacheRoomStreamKey(roomId, room.streamKey);
   await cacheRoomVisibility(roomId, room.visibility);
 
-  const activeKeys = room.streamKeys.filter(k => k.isActive);
+  const activeKeys = room.streamKeys.filter((k: { isActive: boolean }) => k.isActive);
   if (activeKeys.length > 0) {
     await redis.sadd(
       cacheKeys.activeKeys(roomId),
-      ...activeKeys.map(k => k.keyHash)
+      ...activeKeys.map((k: { keyHash: string }) => k.keyHash)
     );
   }
 }
